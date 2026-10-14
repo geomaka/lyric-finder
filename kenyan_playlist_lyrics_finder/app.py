@@ -137,6 +137,16 @@ def google_search_url(title: str, language: str, artist: str = "", include_artis
     return "https://www.google.com/search?q=" + quote_plus(terms)
 
 
+def duckduckgo_search_url(title: str, language: str, artist: str = "", include_artist: bool = False) -> str:
+    terms = f"lyrics {title}"
+    if language != "Unknown / detect manually":
+        terms += f" {language}"
+    if include_artist and artist.strip():
+        terms += f" {artist.strip()}"
+    terms += " -site:youtube.com -site:youtu.be"
+    return "https://duckduckgo.com/?q=" + quote_plus(terms)
+
+
 def find_previewable_result(title: str, language: str, artist: str = "", include_artist: bool = False):
     """Return the first reachable search result that does not explicitly block framing."""
     terms = f"lyrics {title}"
@@ -300,7 +310,7 @@ if songs:
                         "other_results": [],
                         "search_error": f"{type(exc).__name__}: {exc}",
                     }
-                    st.warning("The free web search providers could not return results. Open the Google lyrics search instead.")
+                    st.warning("The app server could not retrieve DuckDuckGo results. You can open the search directly instead.")
             result = st.session_state.get(preview_key)
             if result:
                 result_url = result.get("url", "")
@@ -322,6 +332,11 @@ if songs:
                                 key=f"open_first_result_{song_key}",
                             )
                     else:
+                        st.link_button(
+                            "Open DuckDuckGo search results",
+                            duckduckgo_search_url(song["title"], language, song.get("artist", ""), include_artist),
+                            key=f"duckduckgo_fallback_{song_key}",
+                        )
                         st.link_button(
                             "Open Google search results",
                             url,
