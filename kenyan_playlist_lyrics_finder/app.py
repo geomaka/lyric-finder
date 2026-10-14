@@ -13,12 +13,16 @@ st.markdown(
     .main .block-container { max-width: 1100px; padding-left: clamp(1rem, 4vw, 3rem); padding-right: clamp(1rem, 4vw, 3rem); }
     [data-testid="stCode"] pre { white-space: pre-wrap; overflow-wrap: anywhere; }
     iframe { max-width: 100%; }
+    .mobile-sidebar-hint { display: none; }
     @media (max-width: 640px) {
       .main .block-container { padding: 1rem 0.75rem 2rem; }
       h1 { font-size: 1.8rem !important; }
       [data-testid="stHorizontalBlock"] { flex-direction: column; gap: 0.5rem; }
       [data-testid="stHorizontalBlock"] [data-testid="column"] { width: 100% !important; flex: 1 1 100% !important; }
       [data-testid="stButton"] button, [data-testid="stLinkButton"] a { min-height: 2.75rem; width: 100%; }
+      [data-testid="stSidebarCollapsedControl"] button { min-width: 2.75rem; min-height: 2.75rem; }
+      .mobile-sidebar-hint { display: flex; align-items: center; gap: 0.65rem; margin: 0.75rem 0 1rem; padding: 0.8rem; border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 0.6rem; font-size: 0.95rem; }
+      .mobile-sidebar-hint-icon { font-size: 1.4rem; line-height: 1; }
       iframe { height: 70vh; }
     }
     </style>""",
@@ -26,6 +30,10 @@ st.markdown(
 )
 st.title("Playlist Lyrics Finder")
 st.caption("Open one Google lyrics search per song, then copy the lyrics you choose into Word.")
+st.markdown(
+    '<div class="mobile-sidebar-hint"><span class="mobile-sidebar-hint-icon">☰</span><span><strong>Playlist controls</strong><br>Tap the menu icon at the top left to load a playlist or change the song limit.</span></div>',
+    unsafe_allow_html=True,
+)
 
 LANGUAGES = [
     "Unknown / detect manually", "Kikuyu", "Dholuo", "Luhya", "Kamba",
@@ -131,7 +139,8 @@ def find_previewable_result(title: str, language: str, artist: str = "", include
         terms,
         region="wt-wt",
         max_results=8,
-        backend="duckduckgo",
+        # Keep free non-Brave providers as fallbacks when one engine is unavailable.
+        backend="duckduckgo, bing, mojeek",
     )
     skipped = []
     for position, item in enumerate(results, start=1):
@@ -208,6 +217,8 @@ def export_csv(rows, include_artist: bool) -> bytes:
 
 
 with st.sidebar:
+    st.subheader("Playlist controls")
+    st.caption("Load a YouTube playlist and choose how many songs to include.")
     api_key = configured_api_key()
     playlist_url = st.text_input("YouTube playlist URL", placeholder="https://www.youtube.com/playlist?list=...")
     limit = st.number_input("Maximum songs", min_value=1, max_value=100, value=100, step=1)
@@ -273,10 +284,13 @@ if songs:
                         if search and search.get("other_results"):
                             st.warning("None of the checked pages appears previewable. You can still open a result directly.")
                         else:
-                            st.info("DuckDuckGo returned no result links. Open the Google lyrics search instead.")
-                except Exception:
-                    st.session_state[preview_key] = {"other_results": []}
-                    st.warning("DuckDuckGo could not return results. Open the Google lyrics search instead.")
+                            st.info("The free search providers returned no result links. Open the Google lyrics search instead.")
+                except Exception as exc:
+                    st.session_state[preview_key] = {
+                        "other_results": [],
+                        "search_error": f"{type(exc).__name__}: {exc}",
+                    }
+                    st.warning("The free web search providers could not return results. Open the Google lyrics search instead.")
             result = st.session_state.get(preview_key)
             if result:
                 result_url = result.get("url", "")
@@ -303,6 +317,9 @@ if songs:
                             url,
                             key=f"google_fallback_{song_key}",
                         )
+                        if result.get("search_error"):
+                            with st.expander("Search service error details"):
+                                st.code(result["search_error"])
                     if other_results:
                         with st.expander("Search results (none passed the preview checks)"):
                             for result_index, item in enumerate(other_results, start=1):
