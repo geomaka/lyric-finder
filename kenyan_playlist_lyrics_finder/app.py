@@ -5,14 +5,12 @@ from urllib.parse import parse_qs, quote_plus, urlparse
 
 import requests
 import streamlit as st
-from ddgs import DDGS
 
 st.set_page_config(page_title="Playlist Lyrics Finder", page_icon="🎵", layout="wide")
 st.markdown(
     """<style>
     .main .block-container { max-width: 1100px; padding-left: clamp(1rem, 4vw, 3rem); padding-right: clamp(1rem, 4vw, 3rem); }
     [data-testid="stCode"] pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-    iframe { max-width: 100%; }
     .mobile-sidebar-hint { display: none; }
     @media (max-width: 640px) {
       .main .block-container { padding: 1rem 0.75rem 2rem; }
@@ -33,7 +31,6 @@ st.markdown(
       }
       .mobile-sidebar-hint { display: flex; align-items: center; gap: 0.65rem; margin: 0.75rem 0 1rem; padding: 0.8rem; border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 0.6rem; font-size: 0.95rem; }
       .mobile-sidebar-hint-icon { font-size: 1.4rem; line-height: 1; }
-      iframe { height: 70vh; }
     }
     </style>""",
     unsafe_allow_html=True,
@@ -45,10 +42,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-LANGUAGES = [
-    "Unknown / detect manually", "Kikuyu", "Dholuo", "Luhya", "Kamba",
-    "Kalenjin", "Ekegusii", "Kiswahili", "Sheng", "Other Kenyan language",
-]
 YOUTUBE_API = "https://www.googleapis.com/youtube/v3/playlistItems"
 
 
@@ -117,7 +110,6 @@ def fetch_playlist(api_key: str, playlist_id: str, limit: int = 100):
                 "artist": snippet.get("videoOwnerChannelTitle", "") or snippet.get("channelTitle", ""),
                 "video_id": video_id,
                 "youtube_url": f"https://www.youtube.com/watch?v={video_id}" if video_id else "",
-                "language": "Unknown / detect manually",
             })
         token = data.get("nextPageToken")
         if not token:
@@ -126,109 +118,27 @@ def fetch_playlist(api_key: str, playlist_id: str, limit: int = 100):
     return rows
 
 
-def google_search_url(title: str, language: str, artist: str = "", include_artist: bool = False) -> str:
+def google_search_url(title: str, artist: str = "", include_artist: bool = False) -> str:
     # The artist is optional because playlist channel names often misidentify collaborators.
     terms = f"lyrics {title}"
-    if language != "Unknown / detect manually":
-        terms += f" {language}"
     if include_artist and artist.strip():
         terms += f" {artist.strip()}"
     terms += " -site:youtube.com -site:youtu.be"
     return "https://www.google.com/search?q=" + quote_plus(terms)
 
 
-def duckduckgo_search_url(title: str, language: str, artist: str = "", include_artist: bool = False) -> str:
-    terms = f"lyrics {title}"
-    if language != "Unknown / detect manually":
-        terms += f" {language}"
-    if include_artist and artist.strip():
-        terms += f" {artist.strip()}"
-    terms += " -site:youtube.com -site:youtu.be"
-    return "https://duckduckgo.com/?q=" + quote_plus(terms)
-
-
-def find_previewable_result(title: str, language: str, artist: str = "", include_artist: bool = False):
-    """Return the first reachable search result that does not explicitly block framing."""
-    terms = f"lyrics {title}"
-    if language != "Unknown / detect manually":
-        terms += f" {language}"
-    if include_artist and artist.strip():
-        terms += f" {artist.strip()}"
-    terms += " -site:youtube.com -site:youtu.be"
-    # Keep preview discovery on DuckDuckGo, whose result pages worked best here.
-    results = DDGS(timeout=10).text(
-        terms,
-        region="wt-wt",
-        max_results=8,
-        backend="duckduckgo",
-    )
-    skipped = []
-    for position, item in enumerate(results, start=1):
-        candidate_url = item.get("href", "")
-        parsed_url = urlparse(candidate_url)
-        if parsed_url.scheme not in {"http", "https"} or not parsed_url.netloc:
-            skipped.append(item)
-            continue
-        try:
-            response = requests.get(
-                candidate_url,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; PlaylistLyricsFinder/1.0)"},
-                timeout=6,
-                allow_redirects=True,
-                stream=True,
-            )
-            status = response.status_code
-            final_url = response.url
-            headers = response.headers
-            content_type = headers.get("Content-Type", "").lower()
-            x_frame_options = headers.get("X-Frame-Options", "").lower()
-            csp = headers.get("Content-Security-Policy", "").lower()
-            response.close()
-        except requests.RequestException:
-            skipped.append(item)
-            continue
-
-        if status < 200 or status >= 300 or "text/html" not in content_type and "application/xhtml+xml" not in content_type:
-            skipped.append(item)
-            continue
-        if any(value in x_frame_options for value in ("deny", "sameorigin", "allow-from")):
-            skipped.append(item)
-            continue
-
-        frame_ancestors = next(
-            (directive.strip() for directive in csp.split(";") if directive.strip().startswith("frame-ancestors ")),
-            "",
-        )
-        if frame_ancestors:
-            sources = frame_ancestors.split()[1:]
-            if not sources or "*" not in sources:
-                skipped.append(item)
-                continue
-
-        return {
-            "title": item.get("title", "Search result"),
-            "url": final_url,
-            "position": position,
-            "skipped": skipped,
-            "other_results": results,
-        }
-    return {"result": None, "skipped": skipped, "other_results": results}
-
-
 def export_csv(rows, include_artist: bool) -> bytes:
     buffer = io.StringIO()
-    fields = ["title", "artist", "language", "youtube_url", "google_search_query", "google_search_url"]
+    fields = ["title", "artist", "youtube_url", "google_search_query", "google_search_url"]
     writer = csv.DictWriter(buffer, fieldnames=fields)
     writer.writeheader()
     for song in rows:
-        language = song.get("language", "Unknown / detect manually")
-        url = google_search_url(song["title"], language, song.get("artist", ""), include_artist)
+        url = google_search_url(song["title"], song.get("artist", ""), include_artist)
         query = urlparse(url).query
         search_text = parse_qs(query).get("q", [""])[0]
         writer.writerow({
             "title": song["title"],
             "artist": song.get("artist", ""),
-            "language": language,
             "youtube_url": song.get("youtube_url", ""),
             "google_search_query": search_text,
             "google_search_url": url,
@@ -270,87 +180,24 @@ if songs:
     edited = []
     for index, original_song in enumerate(songs, start=1):
         song = dict(original_song)
+        song.pop("language", None)
         song_key = song.get("video_id") or str(index)
-        current_language = song.get("language") or "Unknown / detect manually"
-        language_index = LANGUAGES.index(current_language) if current_language in LANGUAGES else 0
         with st.container(border=True):
             st.markdown(f"**{index}. {song['title']}**")
             if song.get("artist"):
                 st.caption(f"Playlist channel / artist: {song['artist']}")
             if song.get("youtube_url"):
                 st.link_button("Open YouTube video", song["youtube_url"], key=f"youtube_{song_key}")
-            song["language"] = st.selectbox(
-                "Likely language",
-                options=LANGUAGES,
-                index=language_index,
-                key=f"language_{song_key}",
-            )
             edited.append(song)
-            language = song.get("language") or "Unknown / detect manually"
-            url = google_search_url(song["title"], language, song.get("artist", ""), include_artist)
+            url = google_search_url(song["title"], song.get("artist", ""), include_artist)
             with st.expander("Google search query"):
                 st.code(parse_qs(urlparse(url).query).get("q", [""])[0], language=None)
-            actions = st.columns(2)
-            actions[0].link_button("Search Google for lyrics", url, key=f"google_{song_key}", use_container_width=True)
-            preview_key = f"preview_result_{song_key}"
-            if actions[1].button("Find previewable result", key=f"preview_button_{song_key}", use_container_width=True):
-                try:
-                    with st.spinner("Checking search results for a page that allows previews..."):
-                        search = find_previewable_result(song["title"], language, song.get("artist", ""), include_artist)
-                    if search and search.get("url"):
-                        st.session_state[preview_key] = search
-                    else:
-                        st.session_state[preview_key] = search or {"other_results": []}
-                        if search and search.get("other_results"):
-                            st.warning("None of the checked pages appears previewable. You can still open a result directly.")
-                        else:
-                            st.info("The free search providers returned no result links. Open the Google lyrics search instead.")
-                except Exception as exc:
-                    st.session_state[preview_key] = {
-                        "other_results": [],
-                        "search_error": f"{type(exc).__name__}: {exc}",
-                    }
-                    st.warning("The app server could not retrieve DuckDuckGo results. You can open the search directly instead.")
-            result = st.session_state.get(preview_key)
-            if result:
-                result_url = result.get("url", "")
-                if result_url:
-                    st.markdown(f"**Previewable result (search result {result['position']}):** [{result.get('title', result_url)}]({result_url})")
-                    st.caption("A page can still block framing through browser-side rules. Use Open in browser if the preview is blank.")
-                    st.link_button("Open in browser", result_url, key=f"open_preview_{song_key}")
-                    st.components.v1.iframe(result_url, height=600, scrolling=True)
-                else:
-                    other_results = result.get("other_results", [])
-                    if other_results:
-                        first_result = other_results[0]
-                        first_url = first_result.get("href", "")
-                        if first_url:
-                            st.write("No result allowed an embedded preview. Open the first search result to view the lyrics:")
-                            st.link_button(
-                                "Open first search result",
-                                first_url,
-                                key=f"open_first_result_{song_key}",
-                            )
-                    else:
-                        st.link_button(
-                            "Open DuckDuckGo search results",
-                            duckduckgo_search_url(song["title"], language, song.get("artist", ""), include_artist),
-                            key=f"duckduckgo_fallback_{song_key}",
-                        )
-                        st.link_button(
-                            "Open Google search results",
-                            url,
-                            key=f"google_fallback_{song_key}",
-                        )
-                        if result.get("search_error"):
-                            with st.expander("Search service error details"):
-                                st.code(result["search_error"])
-                    if other_results:
-                        with st.expander("Search results (none passed the preview checks)"):
-                            for result_index, item in enumerate(other_results, start=1):
-                                link = item.get("href", "")
-                                if link:
-                                    st.markdown(f"{result_index}. [{item.get('title', link)}]({link})")
+            st.link_button(
+                "Search Google for lyrics",
+                url,
+                key=f"google_{song_key}",
+                use_container_width=True,
+            )
     st.session_state["songs"] = edited
     st.download_button(
         "Download song list + Google searches (CSV)",
