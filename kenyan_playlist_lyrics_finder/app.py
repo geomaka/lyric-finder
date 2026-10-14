@@ -21,6 +21,16 @@ st.markdown(
       [data-testid="stHorizontalBlock"] [data-testid="column"] { width: 100% !important; flex: 1 1 100% !important; }
       [data-testid="stButton"] button, [data-testid="stLinkButton"] a { min-height: 2.75rem; width: 100%; }
       [data-testid="stSidebarCollapsedControl"] button { min-width: 2.75rem; min-height: 2.75rem; }
+      [data-testid="stSidebarCollapsedControl"] button svg { display: none !important; }
+      [data-testid="stSidebarCollapsedControl"] button::before {
+        content: "";
+        display: block;
+        width: 1.25rem;
+        height: 2px;
+        margin: auto;
+        background: currentColor;
+        box-shadow: 0 -6px currentColor, 0 6px currentColor;
+      }
       .mobile-sidebar-hint { display: flex; align-items: center; gap: 0.65rem; margin: 0.75rem 0 1rem; padding: 0.8rem; border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 0.6rem; font-size: 0.95rem; }
       .mobile-sidebar-hint-icon { font-size: 1.4rem; line-height: 1; }
       iframe { height: 70vh; }
