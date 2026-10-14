@@ -1,10 +1,12 @@
 import csv
 import io
 import os
+from pathlib import Path
 from urllib.parse import parse_qs, quote_plus, urlparse
 
 import requests
 import streamlit as st
+import toml
 
 st.set_page_config(page_title="Playlist Lyrics Finder", page_icon="🎵", layout="wide")
 st.markdown(
@@ -43,6 +45,8 @@ st.markdown(
 )
 
 YOUTUBE_API = "https://www.googleapis.com/youtube/v3/playlistItems"
+OPENROUTER_API = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_OPENROUTER_MODEL = "openrouter/free"
 
 
 def configured_api_key() -> str:
@@ -53,6 +57,45 @@ def configured_api_key() -> str:
         return str(st.secrets.get("YOUTUBE_API_KEY", "")).strip()
     except (FileNotFoundError, RuntimeError):
         return ""
+
+
+def configured_openrouter_api_key() -> str:
+    key = os.getenv("OPENROUTER_API_KEY", "").strip()
+    if key:
+        return key
+    try:
+        key = str(st.secrets.get("OPENROUTER_API_KEY", "")).strip()
+    except (FileNotFoundError, RuntimeError):
+        key = ""
+    if key:
+        return key
+
+    # Streamlit resolves secrets relative to the process working directory.
+    # Also check beside this script so launching it from the parent folder works.
+    secrets_path = Path(__file__).resolve().parent / ".streamlit" / "secrets.toml"
+    try:
+        return str(toml.load(secrets_path).get("OPENROUTER_API_KEY", "")).strip()
+    except (OSError, toml.TomlDecodeError):
+        return ""
+
+
+def configured_openrouter_model() -> str:
+    model = os.getenv("OPENROUTER_MODEL", "").strip()
+    if model:
+        return model
+    try:
+        model = str(st.secrets.get("OPENROUTER_MODEL", "")).strip()
+    except (FileNotFoundError, RuntimeError):
+        model = ""
+    if model:
+        return model
+
+    secrets_path = Path(__file__).resolve().parent / ".streamlit" / "secrets.toml"
+    try:
+        model = str(toml.load(secrets_path).get("OPENROUTER_MODEL", "")).strip()
+    except (OSError, toml.TomlDecodeError):
+        model = ""
+    return model or DEFAULT_OPENROUTER_MODEL
 
 
 def playlist_id_from_url(value: str) -> str:
@@ -127,6 +170,80 @@ def google_search_url(title: str, artist: str = "", include_artist: bool = False
     return "https://www.google.com/search?q=" + quote_plus(terms)
 
 
+def search_lyrics_online(api_key: str, model: str, title: str, artist: str = "") -> str:
+    """Search the web for likely lyric pages and return source links, not lyrics text."""
+    song_info = f"Title: {title}"
+    if artist.strip():
+        song_info += f"\nPossible artist/channel: {artist.strip()}"
+    response = requests.post(
+        OPENROUTER_API,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "X-OpenRouter-Title": "Kenyan Playlist Lyrics Finder",
+        },
+        json={
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "Find online pages that may contain the actual lyrics for the requested existing song. Search the web using the title exactly as provided, "
+                        "preserving its spelling and diacritics; do not assume the lyrics are English. Treat the artist/channel as a hint, not a required match. "
+                        "Return up to five candidate pages with each page title, named artist if available, the likely lyrics language only when the source supports it, "
+                        "a short reason it may match, and a clickable Markdown source URL. "
+                        "Use only URLs returned by web search and never invent a source. Do not reproduce any lyrics or substantial excerpts. "
+                        "Mark uncertain matches as candidates and say if no useful source was found."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Search for lyric pages for this song. Keep the original title spelling and language in your search.\n{song_info}",
+                },
+            ],
+            "tools": [{
+                "type": "openrouter:web_search",
+                "parameters": {
+                    "engine": "parallel",
+                    "mode": "basic",
+                    "max_results": 5,
+                    "max_uses": 1,
+                },
+            }],
+            "max_tool_calls": 1,
+            "max_tokens": 700,
+            "temperature": 0.2,
+        },
+        timeout=60,
+    )
+    if response.status_code != 200:
+        try:
+            message = response.json().get("error", {}).get("message", response.text)
+        except ValueError:
+            message = response.text
+        raise RuntimeError(f"OpenRouter API error ({response.status_code}): {message}")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError("OpenRouter returned an unreadable response. Try again.") from exc
+
+    choices = payload.get("choices", [])
+    generated = ""
+    if choices:
+        content = choices[0].get("message", {}).get("content", "")
+        if isinstance(content, str):
+            generated = content.strip()
+        elif isinstance(content, list):
+            generated = "\n".join(
+                part.get("text", "") for part in content if isinstance(part, dict) and part.get("text")
+            ).strip()
+    if not generated:
+        reason = choices[0].get("finish_reason", "") if choices else ""
+        detail = f" (reason: {reason})" if reason else ""
+        raise RuntimeError(f"OpenRouter returned no search results{detail}. Try again or use Google search.")
+    return generated
+
+
 def export_csv(rows, include_artist: bool) -> bytes:
     buffer = io.StringIO()
     fields = ["title", "artist", "youtube_url", "google_search_query", "google_search_url"]
@@ -150,6 +267,8 @@ with st.sidebar:
     st.subheader("Playlist controls")
     st.caption("Load a YouTube playlist and choose how many songs to include.")
     api_key = configured_api_key()
+    openrouter_api_key = configured_openrouter_api_key()
+    openrouter_model = configured_openrouter_model()
     playlist_url = st.text_input("YouTube playlist URL", placeholder="https://www.youtube.com/playlist?list=...")
     limit = st.number_input("Maximum songs", min_value=1, max_value=100, value=100, step=1)
     load = st.button("Load playlist", type="primary", use_container_width=True)
@@ -176,7 +295,8 @@ if songs:
         value=False,
         help="Leave this off for collaborations or uncertain artist names. Searches then use the song title and lyrics only.",
     )
-    st.write("Click a Google button to search for a song. Review a source you trust, then copy the lyrics you choose into Word.")
+    st.caption("AI web search uses OpenRouter credits . It returns lyric-source links and match details, not the lyrics themselves.")
+    st.write("Review a source you trust, then copy the lyrics from that source into Word.")
     edited = []
     for index, original_song in enumerate(songs, start=1):
         song = dict(original_song)
@@ -198,6 +318,29 @@ if songs:
                 key=f"google_{song_key}",
                 use_container_width=True,
             )
+            if st.button(
+                "Find lyric sources with AI ·",
+                key=f"search_lyrics_{song_key}",
+                use_container_width=True,
+            ):
+                if not openrouter_api_key:
+                    st.warning("OpenRouter key not found. Add OPENROUTER_API_KEY to the .streamlit/secrets.toml beside app.py, then restart Streamlit. Google search remains available.")
+                else:
+                    try:
+                        with st.spinner("Searching the web for lyric sources..."):
+                            results = search_lyrics_online(
+                                openrouter_api_key,
+                                openrouter_model,
+                                song["title"],
+                                song.get("artist", ""),
+                            )
+                        st.session_state[f"lyric_sources_{song_key}"] = results
+                    except (requests.RequestException, RuntimeError) as exc:
+                        st.error(f"Could not search for lyric sources: {exc}")
+            results_key = f"lyric_sources_{song_key}"
+            if results_key in st.session_state:
+                st.caption("AI-assisted web search results. Open a source to view the actual lyrics in their original language.")
+                st.markdown(st.session_state[results_key], unsafe_allow_html=False)
     st.session_state["songs"] = edited
     st.download_button(
         "Download song list + Google searches (CSV)",
