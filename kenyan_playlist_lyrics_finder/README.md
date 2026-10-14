@@ -55,6 +55,7 @@ Create `.streamlit/secrets.toml` in the project folder with the same `YOUTUBE_AP
 ## Use
 
 - Choose a likely language for each song if you want it included in the search.
+- Song controls are displayed as cards and stack vertically on narrow screens for phone use.
 - Click **Search Google for lyrics** to open a query for that song.
 - **Find previewable result** uses DuckDuckGo through the free `ddgs` library; it does not need another API key. It checks several results in order, skips unreachable pages and pages whose response headers explicitly block embedding, then previews the first candidate that passes. If none pass, **Open first search result** opens the first candidate. If DuckDuckGo returns no links or is unavailable, **Open Google search results** is shown as a fallback. Some browser-side restrictions cannot be detected before the iframe loads, and free search can be rate-limited or temporarily unavailable.
 - Searches use unquoted song titles and exclude YouTube domains to favor lyric pages over video results. Artist/channel names are excluded by default because they can be unreliable for collaborations; turn on the checkbox to include them if useful.

@@ -8,6 +8,22 @@ import streamlit as st
 from ddgs import DDGS
 
 st.set_page_config(page_title="Playlist Lyrics Finder", page_icon="🎵", layout="wide")
+st.markdown(
+    """<style>
+    .main .block-container { max-width: 1100px; padding-left: clamp(1rem, 4vw, 3rem); padding-right: clamp(1rem, 4vw, 3rem); }
+    [data-testid="stCode"] pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+    iframe { max-width: 100%; }
+    @media (max-width: 640px) {
+      .main .block-container { padding: 1rem 0.75rem 2rem; }
+      h1 { font-size: 1.8rem !important; }
+      [data-testid="stHorizontalBlock"] { flex-direction: column; gap: 0.5rem; }
+      [data-testid="stHorizontalBlock"] [data-testid="column"] { width: 100% !important; flex: 1 1 100% !important; }
+      [data-testid="stButton"] button, [data-testid="stLinkButton"] a { min-height: 2.75rem; width: 100%; }
+      iframe { height: 70vh; }
+    }
+    </style>""",
+    unsafe_allow_html=True,
+)
 st.title("Playlist Lyrics Finder")
 st.caption("Open one Google lyrics search per song, then copy the lyrics you choose into Word.")
 
@@ -219,33 +235,34 @@ if songs:
         value=False,
         help="Leave this off for collaborations or uncertain artist names. Searches then use the song title and lyrics only.",
     )
-    edited = st.data_editor(
-        songs,
-        use_container_width=True,
-        hide_index=True,
-        disabled=["title", "artist", "video_id", "youtube_url"],
-        column_config={
-            "title": st.column_config.TextColumn("Song / video title"),
-            "artist": st.column_config.TextColumn("Channel / artist"),
-            "video_id": None,
-            "youtube_url": st.column_config.LinkColumn("YouTube video", display_text="Open video"),
-            "language": st.column_config.SelectboxColumn("Likely language", options=LANGUAGES, required=True),
-        },
-        key="song_editor",
-    )
-    st.session_state["songs"] = edited
     st.write("Click a Google button to search for a song. Review a source you trust, then copy the lyrics you choose into Word.")
-    for index, song in enumerate(edited, start=1):
-        language = song.get("language") or "Unknown / detect manually"
-        url = google_search_url(song["title"], language, song.get("artist", ""), include_artist)
+    edited = []
+    for index, original_song in enumerate(songs, start=1):
+        song = dict(original_song)
+        song_key = song.get("video_id") or str(index)
+        current_language = song.get("language") or "Unknown / detect manually"
+        language_index = LANGUAGES.index(current_language) if current_language in LANGUAGES else 0
         with st.container(border=True):
             st.markdown(f"**{index}. {song['title']}**")
             if song.get("artist"):
                 st.caption(f"Playlist channel / artist: {song['artist']}")
-            columns = st.columns([1, 1, 3])
-            columns[0].link_button("Search Google for lyrics", url, use_container_width=True)
-            preview_key = f"preview_result_{song.get('video_id') or index}"
-            if columns[1].button("Find previewable result", key=f"preview_button_{song.get('video_id') or index}", use_container_width=True):
+            if song.get("youtube_url"):
+                st.link_button("Open YouTube video", song["youtube_url"], key=f"youtube_{song_key}")
+            song["language"] = st.selectbox(
+                "Likely language",
+                options=LANGUAGES,
+                index=language_index,
+                key=f"language_{song_key}",
+            )
+            edited.append(song)
+            language = song.get("language") or "Unknown / detect manually"
+            url = google_search_url(song["title"], language, song.get("artist", ""), include_artist)
+            with st.expander("Google search query"):
+                st.code(parse_qs(urlparse(url).query).get("q", [""])[0], language=None)
+            actions = st.columns(2)
+            actions[0].link_button("Search Google for lyrics", url, key=f"google_{song_key}", use_container_width=True)
+            preview_key = f"preview_result_{song_key}"
+            if actions[1].button("Find previewable result", key=f"preview_button_{song_key}", use_container_width=True):
                 try:
                     with st.spinner("Checking search results for a page that allows previews..."):
                         search = find_previewable_result(song["title"], language, song.get("artist", ""), include_artist)
@@ -257,20 +274,16 @@ if songs:
                             st.warning("None of the checked pages appears previewable. You can still open a result directly.")
                         else:
                             st.info("DuckDuckGo returned no result links. Open the Google lyrics search instead.")
-                except Exception as exc:
-                    st.session_state[preview_key] = {
-                        "other_results": [],
-                        "search_error": str(exc),
-                    }
+                except Exception:
+                    st.session_state[preview_key] = {"other_results": []}
                     st.warning("DuckDuckGo could not return results. Open the Google lyrics search instead.")
-            columns[2].code(parse_qs(urlparse(url).query).get("q", [""])[0], language=None)
             result = st.session_state.get(preview_key)
             if result:
                 result_url = result.get("url", "")
                 if result_url:
                     st.markdown(f"**Previewable result (search result {result['position']}):** [{result.get('title', result_url)}]({result_url})")
                     st.caption("A page can still block framing through browser-side rules. Use Open in browser if the preview is blank.")
-                    st.link_button("Open in browser", result_url)
+                    st.link_button("Open in browser", result_url, key=f"open_preview_{song_key}")
                     st.components.v1.iframe(result_url, height=600, scrolling=True)
                 else:
                     other_results = result.get("other_results", [])
@@ -282,13 +295,13 @@ if songs:
                             st.link_button(
                                 "Open first search result",
                                 first_url,
-                                key=f"open_first_result_{song.get('video_id') or index}",
+                                key=f"open_first_result_{song_key}",
                             )
                     else:
                         st.link_button(
                             "Open Google search results",
                             url,
-                            key=f"google_fallback_{song.get('video_id') or index}",
+                            key=f"google_fallback_{song_key}",
                         )
                     if other_results:
                         with st.expander("Search results (none passed the preview checks)"):
@@ -296,6 +309,7 @@ if songs:
                                 link = item.get("href", "")
                                 if link:
                                     st.markdown(f"{result_index}. [{item.get('title', link)}]({link})")
+    st.session_state["songs"] = edited
     st.download_button(
         "Download song list + Google searches (CSV)",
         data=export_csv(edited, include_artist),
@@ -308,7 +322,6 @@ else:
 
 1. Loads song titles from a YouTube playlist.
 2. Builds a Google lyrics search for each song. Artist names are optional because playlist channel names can be unreliable.
-3. Lets you open a search and copy lyrics from a source you choose into Word.
 
 The app does not fetch, store, or reproduce lyrics. It only creates Google search links and a CSV of those links."""
     )
