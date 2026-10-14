@@ -41,7 +41,7 @@ st.markdown(
 st.title("Playlist Lyrics Finder")
 st.caption("Open one Google lyrics search per song, then copy the lyrics you choose into Word.")
 st.markdown(
-    '<div class="mobile-sidebar-hint"><span class="mobile-sidebar-hint-icon">(>>)</span><span><strong>Playlist controls</strong><br>Tap the arrow icon at the top left to load a playlist or change the song limit.</span></div>',
+    '<div class="mobile-sidebar-hint"><span class="mobile-sidebar-hint-icon"> >> </span><span><strong>Playlist controls</strong><br>Tap the arrow icon at the top left to load a playlist or change the song limit.</span></div>',
     unsafe_allow_html=True,
 )
 
@@ -145,13 +145,30 @@ def find_previewable_result(title: str, language: str, artist: str = "", include
     if include_artist and artist.strip():
         terms += f" {artist.strip()}"
     terms += " -site:youtube.com -site:youtu.be"
-    results = DDGS(timeout=10).text(
-        terms,
-        region="wt-wt",
-        max_results=8,
-        # Keep free non-Brave providers as fallbacks when one engine is unavailable.
-        backend="duckduckgo, bing, mojeek",
-    )
+    # Query providers one at a time. Some ddgs releases can discard good results
+    # when multiple backends are run together and one backend fails.
+    results = []
+    search_errors = []
+    for backend in ("duckduckgo", "bing", "mojeek"):
+        try:
+            results = DDGS(timeout=10).text(
+                terms,
+                region="wt-wt",
+                max_results=8,
+                backend=backend,
+            )
+        except Exception as exc:
+            search_errors.append(f"{backend}: {type(exc).__name__}: {exc}")
+            continue
+        if results:
+            break
+    if not results:
+        return {
+            "result": None,
+            "skipped": [],
+            "other_results": [],
+            "search_error": "\n".join(search_errors) or "All search providers returned no results.",
+        }
     skipped = []
     for position, item in enumerate(results, start=1):
         candidate_url = item.get("href", "")
