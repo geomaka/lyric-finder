@@ -41,7 +41,7 @@ st.markdown(
 st.title("Playlist Lyrics Finder")
 st.caption("Open one Google lyrics search per song, then copy the lyrics you choose into Word.")
 st.markdown(
-    '<div class="mobile-sidebar-hint"><span class="mobile-sidebar-hint-icon">☰</span><span><strong>Playlist controls</strong><br>Tap the menu icon at the top left to load a playlist or change the song limit.</span></div>',
+    '<div class="mobile-sidebar-hint"><span class="mobile-sidebar-hint-icon">(>><)/span><span><strong>Playlist controls</strong><br>Tap the arrow icon at the top left to load a playlist or change the song limit.</span></div>',
     unsafe_allow_html=True,
 )
 
